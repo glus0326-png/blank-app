@@ -1,0 +1,204 @@
+[1mdiff --git a/README.md b/README.md[m
+[1mindex 41174be..5fa0842 100644[m
+[1m--- a/README.md[m
+[1m+++ b/README.md[m
+[36m@@ -17,3 +17,5 @@[m [mA simple Streamlit app template for you to modify![m
+    ```[m
+    $ streamlit run streamlit_app.py[m
+    ```[m
+[32m+[m
+[32m+[m[32m3. For YouTube data collection, set your API key in `YOUTUBE_API_KEY` or paste it into the app.[m
+[1mdiff --git a/requirements.txt b/requirements.txt[m
+[1mindex e251330..d71eacb 100644[m
+[1m--- a/requirements.txt[m
+[1m+++ b/requirements.txt[m
+[36m@@ -1 +1,4 @@[m
+[31m-streamlit[m
+\ No newline at end of file[m
+[32m+[m[32mstreamlit[m
+[32m+[m[32mpandas[m
+[32m+[m[32mgoogle-api-python-client[m
+[32m+[m[32misodate[m
+\ No newline at end of file[m
+[1mdiff --git a/streamlit_app.py b/streamlit_app.py[m
+[1mindex fde12be..3a615df 100644[m
+[1m--- a/streamlit_app.py[m
+[1m+++ b/streamlit_app.py[m
+[36m@@ -1,6 +1,173 @@[m
+[32m+[m[32mimport os[m
+[32m+[m
+[32m+[m[32mimport isodate[m
+[32m+[m[32mimport pandas as pd[m
+ import streamlit as st[m
+[32m+[m[32mfrom googleapiclient.discovery import build[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef extract_video_id(value):[m
+[32m+[m[32m    value = value.strip()[m
+[32m+[m[32m    if not value:[m
+[32m+[m[32m        return None[m
+[32m+[m
+[32m+[m[32m    # 이미 비디오 ID만 입력한 경우[m
+[32m+[m[32m    if len(value) >= 11 and 'youtube' not in value and 'youtu.be' not in value:[m
+[32m+[m[32m        return value[m
+[32m+[m
+[32m+[m[32m    try:[m
+[32m+[m[32m        from urllib.parse import parse_qs, urlparse[m
+[32m+[m
+[32m+[m[32m        parsed = urlparse(value)[m
+[32m+[m[32m        if parsed.hostname in ('youtu.be', 'www.youtu.be'):[m
+[32m+[m[32m            return parsed.path.lstrip('/')[m
+[32m+[m[32m        if parsed.hostname in ('youtube.com', 'www.youtube.com', 'm.youtube.com'):[m
+[32m+[m[32m            if parsed.path == '/watch':[m
+[32m+[m[32m                query = parse_qs(parsed.query)[m
+[32m+[m[32m                return query.get('v', [None])[0][m
+[32m+[m[32m            if parsed.path.startswith('/embed/'):[m
+[32m+[m[32m                return parsed.path.split('/')[2][m
+[32m+[m[32m            if parsed.path.startswith('/shorts/'):[m
+[32m+[m[32m                return parsed.path.split('/')[2][m
+[32m+[m[32m    except Exception:[m
+[32m+[m[32m        return None[m
+[32m+[m
+[32m+[m[32m    return None[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef fetch_video_data(api_key, video_ids):[m
+[32m+[m[32m    youtube = build("youtube", "v3", developerKey=api_key)[m
+[32m+[m[32m    all_videos = [][m
+[32m+[m
+[32m+[m[32m    for i in range(0, len(video_ids), 50):[m
+[32m+[m[32m        batch_ids = video_ids[i : i + 50][m
+[32m+[m[32m        response = ([m
+[32m+[m[32m            youtube.videos()[m
+[32m+[m[32m            .list(part="snippet,statistics,contentDetails", id=','.join(batch_ids))[m
+[32m+[m[32m            .execute()[m
+[32m+[m[32m        )[m
+[32m+[m
+[32m+[m[32m        for video in response.get('items', []):[m
+[32m+[m[32m            video_id = video.get('id')[m
+[32m+[m[32m            snippet = video.get('snippet', {})[m
+[32m+[m[32m            stats = video.get('statistics', {})[m
+[32m+[m[32m            content = video.get('contentDetails', {})[m
+[32m+[m[32m            duration = content.get('duration', 'PT0S')[m
+[32m+[m
+[32m+[m[32m            duration_seconds = int(isodate.parse_duration(duration).total_seconds())[m
+[32m+[m[32m            minutes = duration_seconds // 60[m
+[32m+[m[32m            seconds = duration_seconds % 60[m
+[32m+[m
+[32m+[m[32m            all_videos.append({[m
+[32m+[m[32m                '채널명': snippet.get('channelTitle', ''),[m
+[32m+[m[32m                '링크': f"https://www.youtube.com/watch?v={video_id}",[m
+[32m+[m[32m                '제목(원본 제목)': snippet.get('title', ''),[m
+[32m+[m[32m                '제목(한국어 번역)': snippet.get('title', ''),[m
+[32m+[m[32m                '조회수': int(stats.get('viewCount', 0)),[m
+[32m+[m[32m                '좋아요': int(stats.get('likeCount', 0)),[m
+[32m+[m[32m                '댓글': int(stats.get('commentCount', 0)),[m
+[32m+[m[32m                '게시일': snippet.get('publishedAt', '')[:10],[m
+[32m+[m[32m                '영상 평균 길이': f"{minutes}:{seconds:02d}",[m
+[32m+[m[32m            })[m
+[32m+[m
+[32m+[m[32m    return pd.DataFrame(all_videos)[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef fetch_channel_stats(api_key, channel_id):[m
+[32m+[m[32m    youtube = build("youtube", "v3", developerKey=api_key)[m
+[32m+[m[32m    response = ([m
+[32m+[m[32m        youtube.channels()[m
+[32m+[m[32m        .list(part='statistics', id=channel_id)[m
+[32m+[m[32m        .execute()[m
+[32m+[m[32m    )[m
+[32m+[m[32m    if response.get('items'):[m
+[32m+[m[32m        return response['items'][0].get('statistics', {})[m
+[32m+[m[32m    return {}[m
+[32m+[m
+[32m+[m
+[32m+[m[32mdef main():[m
+[32m+[m[32m    st.title('🎯 YouTube Video Stats Collector')[m
+[32m+[m[32m    st.write('Paste YouTube URLs or video IDs below, one per line, then click **Fetch data**.')[m
+[32m+[m
+[32m+[m[32m    api_key = st.text_input([m
+[32m+[m[32m        'YouTube API Key',[m
+[32m+[m[32m        value=os.getenv('YOUTUBE_API_KEY', ''),[m
+[32m+[m[32m        type='password',[m
+[32m+[m[32m        help='You can also set YOUTUBE_API_KEY in your environment.',[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    video_ids_input = st.text_area([m
+[32m+[m[32m        'Video IDs',[m
+[32m+[m[32m        height=220,[m
+[32m+[m[32m        placeholder='Enter one YouTube video ID per line',[m
+[32m+[m[32m    )[m
+[32m+[m
+[32m+[m[32m    if st.button('Fetch data'):[m
+[32m+[m[32m        video_ids = [line.strip() for line in video_ids_input.splitlines() if line.strip()][m
+[32m+[m[32m        parsed_ids = [][m
+[32m+[m[32m        for value in video_ids:[m
+[32m+[m[32m            video_id = extract_video_id(value)[m
+[32m+[m[32m            if video_id:[m
+[32m+[m[32m                parsed_ids.append(video_id)[m
+[32m+[m
+[32m+[m[32m        if not api_key:[m
+[32m+[m[32m            st.error('API 키를 입력하거나 YOUTUBE_API_KEY 환경 변수를 설정하세요.')[m
+[32m+[m[32m            return[m
+[32m+[m
+[32m+[m[32m        if not parsed_ids:[m
+[32m+[m[32m            st.error('최소 하나의 YouTube 비디오 ID를 입력하세요.')[m
+[32m+[m[32m            return[m
+[32m+[m
+[32m+[m[32m        with st.spinner('데이터를 가져오는 중입니다...'):[m
+[32m+[m[32m            try:[m
+[32m+[m[32m                df = fetch_video_data(api_key, video_ids)[m
+[32m+[m
+[32m+[m[32m                if df.empty:[m
+[32m+[m[32m                    st.warning('요청한 비디오에서 데이터를 찾을 수 없습니다.')[m
+[32m+[m[32m                    return[m
+[32m+[m
+[32m+[m[32m                st.success(f'수집된 영상: {len(df)}개')[m
+[32m+[m[32m                st.write('### 데이터 미리보기')[m
+[32m+[m[32m                st.dataframe(df)[m
+[32m+[m
+[32m+[m[32m                st.write('### 엑셀 복사용 출력')[m
+[32m+[m[32m                tsv_text = df.to_csv(sep='\t', index=False)[m
+[32m+[m[32m                st.text_area('복사해서 엑셀에 붙여넣기', tsv_text, height=260)[m
+[32m+[m
+[32m+[m[32m                st.write('### 데이터 통계')[m
+[32m+[m[32m                stats_col1, stats_col2 = st.columns(2)[m
+[32m+[m[32m                stats_col1.metric('평균 조회수', f"{df['조회수'].mean():,.0f}")[m
+[32m+[m[32m                stats_col1.metric('최고 조회수', f"{df['조회수'].max():,}")[m
+[32m+[m[32m                stats_col2.metric('평균 좋아요', f"{df['좋아요'].mean():,.0f}")[m
+[32m+[m[32m                stats_col2.metric('총 댓글', f"{df['댓글'].sum():,}")[m
+[32m+[m
+[32m+[m[32m                first_channel_id = None[m
+[32m+[m[32m                if not df.empty:[m
+[32m+[m[32m                    first_channel_id = ([m
+[32m+[m[32m                        build('youtube', 'v3', developerKey=api_key)[m
+[32m+[m[32m                        .videos()[m
+[32m+[m[32m                        .list(part='snippet', id=video_ids[0])[m
+[32m+[m[32m                        .execute()[m
+[32m+[m[32m                        .get('items', [])[0][m
+[32m+[m[32m                        .get('snippet', {})[m
+[32m+[m[32m                        .get('channelId')[m
+[32m+[m[32m                    )[m
+[32m+[m
+[32m+[m[32m                if first_channel_id:[m
+[32m+[m[32m                    channel_stats = fetch_channel_stats(api_key, first_channel_id)[m
+[32m+[m[32m                    if channel_stats:[m
+[32m+[m[32m                        st.write('### 채널 정보')[m
+[32m+[m[32m                        st.write([m
+[32m+[m[32m                            {[m
+[32m+[m[32m                                '구독자': f"{int(channel_stats.get('subscriberCount', 0)):,}",[m
+[32m+[m[32m                                '영상 개수': f"{int(channel_stats.get('videoCount', 0)):,}",[m
+[32m+[m[32m                                '총 조회수': f"{int(channel_stats.get('viewCount', 0)):,}",[m
+[32m+[m[32m                            }[m
+[32m+[m[32m                        )[m
+[32m+[m
+[32m+[m[32m            except Exception as exc:[m
+[32m+[m[32m                st.error(f'데이터 수집 중 오류가 발생했습니다: {exc}')[m
+[32m+[m
+ [m
+[31m-st.title("🎈 My new app")[m
+[31m-st.write([m
+[31m-    "Let's start building! For help and inspiration, head over to [docs.streamlit.io](https://docs.streamlit.io/)."[m
+[31m-)[m
+[32m+[m[32mif __name__ == '__main__':[m
+[32m+[m[32m    main()[m
